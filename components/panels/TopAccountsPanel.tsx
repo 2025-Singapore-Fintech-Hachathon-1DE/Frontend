@@ -1,57 +1,80 @@
 import React, { useState, useMemo } from 'react'
-import { SanctionCase, TopAccount } from '../../types'
+import { DetectionCase, TopAccount } from '../../types'
 
 type Period = 'day' | 'week' | 'month'
 type Model = 'all' | 'funding' | 'wash' | 'cooperative'
 
 interface TopAccountsPanelProps {
-    allSanctions: SanctionCase[]
+    allDetections: DetectionCase[]
     onSelectAccount: (account: TopAccount) => void
     washTradingPairs?: Array<{ pair_id: string; winner_account: string }>
 }
 
 const calculateTopAccounts = (
-    sanctions: SanctionCase[],
+    detections: DetectionCase[],
     period: Period,
     model: Model,
     washTradingPairs: Array<{ pair_id: string; winner_account: string }> = []
 ): TopAccount[] => {
-    const now = Date.now()
+    // 탐지 데이터의 최신 시간을 기준으로 사용 (시뮬레이션 시간 고려)
+    const allTimestamps = detections.map((d) => (typeof d.timestamp === 'number' ? d.timestamp : new Date(d.timestamp).getTime()))
+    const maxTime = allTimestamps.length > 0 ? Math.max(...allTimestamps) : Date.now()
+
     let startTime = 0
-    if (period === 'day') startTime = now - 24 * 60 * 60 * 1000
-    if (period === 'week') startTime = now - 7 * 24 * 60 * 60 * 1000
-    if (period === 'month') startTime = now - 30 * 24 * 60 * 60 * 1000
+    if (period === 'day') startTime = maxTime - 24 * 60 * 60 * 1000
+    if (period === 'week') startTime = maxTime - 7 * 24 * 60 * 60 * 1000
+    if (period === 'month') startTime = maxTime - 30 * 24 * 60 * 60 * 1000
 
-    const filteredSanctions = sanctions.filter((s) => s.timestamp >= startTime && (model === 'all' || s.model === model))
+    const filteredDetections = detections.filter((d) => {
+        const ts = typeof d.timestamp === 'number' ? d.timestamp : new Date(d.timestamp).getTime()
+        return ts >= startTime && (model === 'all' || d.model === model)
+    })
 
-    const accountStats: { [key: string]: { cases: SanctionCase[]; profits: { funding: number; wash: number; cooperative: number } } } = {}
+    const accountStats: { [key: string]: { cases: DetectionCase[]; profits: { funding: number; wash: number; cooperative: number } } } = {}
 
-    filteredSanctions.forEach((sanction) => {
-        sanction.accounts.forEach((accId) => {
+    filteredDetections.forEach((detection) => {
+        detection.accounts.forEach((accId) => {
             if (!accountStats[accId]) {
                 accountStats[accId] = { cases: [], profits: { funding: 0, wash: 0, cooperative: 0 } }
             }
-            accountStats[accId].cases.push(sanction)
+            accountStats[accId].cases.push(detection)
 
-            if (sanction.model === 'funding') {
-                accountStats[accId].profits.funding += sanction.raw.total_funding || 0
-            } else if (sanction.model === 'wash') {
-                const winnerAccountsInCase = new Set(
-                    washTradingPairs.filter((p) => sanction.raw.trade_pair_ids?.includes(p.pair_id)).map((p) => p.winner_account)
-                )
-                if (winnerAccountsInCase.has(accId)) {
-                    accountStats[accId].profits.wash += (sanction.launderedAmount || 0) / (winnerAccountsInCase.size || 1)
+            if (detection.model === 'funding') {
+                // window_funding 사용 (DetectionCase)
+                accountStats[accId].profits.funding += detection.raw.window_funding || detection.window_funding || 0
+            } else if (detection.model === 'wash') {
+                // DetectionCase - raw에서 직접 확인
+                if (detection.raw.winner_account === accId) {
+                    accountStats[accId].profits.wash += detection.raw.laundered_amount || detection.laundered_amount || 0
                 }
-            } else if (sanction.model === 'cooperative') {
-                accountStats[accId].profits.cooperative += (sanction.raw.pnl_total || 0) / (sanction.accounts.length || 1)
+                // SanctionCase - fallback
+                else {
+                    const winnerAccountsInCase = new Set(
+                        washTradingPairs.filter((p) => detection.raw.trade_pair_ids?.includes(p.pair_id)).map((p) => p.winner_account)
+                    )
+                    if (winnerAccountsInCase.has(accId)) {
+                        accountStats[accId].profits.wash += (detection.laundered_amount || 0) / (winnerAccountsInCase.size || 1)
+                    }
+                }
+            } else if (detection.model === 'cooperative') {
+                // DetectionCase - raw에서 PNL 분배
+                if (detection.raw.account_id1 === accId) {
+                    accountStats[accId].profits.cooperative += detection.raw.rpnl1 || 0
+                } else if (detection.raw.account_id2 === accId) {
+                    accountStats[accId].profits.cooperative += detection.raw.rpnl2 || 0
+                } else {
+                    // fallback - 균등 분배
+                    accountStats[accId].profits.cooperative +=
+                        (detection.raw.pnl_total || detection.total_pnl || 0) / (detection.accounts.length || 1)
+                }
             }
         })
     })
 
     const topAccounts: TopAccount[] = Object.entries(accountStats).map(([accountId, stats]) => {
         const totalCases = stats.cases.length
-        const totalScore = stats.cases.reduce((sum, s) => sum + s.score, 0)
-        const maxScore = Math.max(...stats.cases.map((s) => s.score))
+        const totalScore = stats.cases.reduce((sum, d) => sum + d.score, 0)
+        const maxScore = Math.max(...stats.cases.map((d) => d.score))
         const total_profit_loss = stats.profits.funding + stats.profits.wash + stats.profits.cooperative
         return {
             account_id: accountId,
@@ -60,21 +83,21 @@ const calculateTopAccounts = (
             profits: stats.profits,
             avg_score: totalCases > 0 ? totalScore / totalCases : 0,
             max_score: maxScore,
-            critical_count: stats.cases.filter((s) => s.score >= 85).length,
-            high_count: stats.cases.filter((s) => s.score >= 70 && s.score < 85).length,
+            critical_count: stats.cases.filter((d) => d.score >= 85).length,
+            high_count: stats.cases.filter((d) => d.score >= 70 && d.score < 85).length,
         }
     })
 
     return topAccounts.sort((a, b) => b.total_profit_loss - a.total_profit_loss).slice(0, 5)
 }
 
-export const TopAccountsPanel: React.FC<TopAccountsPanelProps> = ({ allSanctions, onSelectAccount, washTradingPairs = [] }) => {
+export const TopAccountsPanel: React.FC<TopAccountsPanelProps> = ({ allDetections, onSelectAccount, washTradingPairs = [] }) => {
     const [period, setPeriod] = useState<Period>('month')
     const [model, setModel] = useState<Model>('all')
 
     const topAccounts = useMemo(
-        () => calculateTopAccounts(allSanctions, period, model, washTradingPairs),
-        [allSanctions, period, model, washTradingPairs]
+        () => calculateTopAccounts(allDetections, period, model, washTradingPairs),
+        [allDetections, period, model, washTradingPairs]
     )
 
     const modelNames: Record<Model, string> = { all: '전체', funding: '펀딩비', wash: '자금세탁', cooperative: '공모' }

@@ -4,7 +4,7 @@
  */
 
 import { useState, useEffect, useCallback, useRef } from 'react'
-import { getSimulationStatus, advanceSimulation, resetSimulation } from '../api/client'
+import { getSimulationStatus, advanceSimulation, resetSimulation, jumpToDate } from '../api/client'
 
 interface SimulationState {
     isPlaying: boolean
@@ -13,16 +13,18 @@ interface SimulationState {
     simulationProgress: number // 0-100
     startDate: Date
     endDate: Date
+    isLoading: boolean // 로딩 상태 추가
 }
 
 export const useSimulation = (onDataUpdate?: () => void) => {
     const [state, setState] = useState<SimulationState>({
         isPlaying: false,
-        speed: 86400, // 1 day = 86400 seconds (기본값: 1일이 실시간 1일)
+        speed: 10, // 기본값: 1일이 실시간 10초 (더 빠른 시뮬레이션)
         currentTime: null,
         simulationProgress: 0,
         startDate: new Date(2025, 1, 1), // 2025-02-01
         endDate: new Date(2025, 11, 31), // 2025-12-31
+        isLoading: false,
     })
 
     const [error, setError] = useState<string | null>(null)
@@ -62,6 +64,7 @@ export const useSimulation = (onDataUpdate?: () => void) => {
         async (days: number = 7) => {
             try {
                 setError(null)
+                setState((prev) => ({ ...prev, isLoading: true }))
                 console.log(`Advancing simulation by ${days} days...`)
 
                 const result = await advanceSimulation(days, 0)
@@ -75,10 +78,74 @@ export const useSimulation = (onDataUpdate?: () => void) => {
                     onDataUpdate()
                 }
 
+                setState((prev) => ({ ...prev, isLoading: false }))
                 return result
             } catch (err: any) {
                 console.error('Failed to advance simulation:', err)
                 setError(err.message || '시뮬레이션 진행 실패')
+                setState((prev) => ({ ...prev, isLoading: false, isPlaying: false }))
+                throw err
+            }
+        },
+        [fetchStatus, onDataUpdate]
+    )
+
+    // N일 건너뛰기
+    const skipDays = useCallback(
+        async (days: number) => {
+            try {
+                setError(null)
+                setState((prev) => ({ ...prev, isPlaying: false, isLoading: true }))
+                console.log(`Skipping ${days} days...`)
+
+                const result = await advanceSimulation(days, 0)
+                console.log('Skipped successfully:', result)
+
+                // 상태 업데이트
+                await fetchStatus()
+
+                // 데이터 리로드 트리거
+                if (onDataUpdate) {
+                    onDataUpdate()
+                }
+
+                setState((prev) => ({ ...prev, isLoading: false }))
+                return result
+            } catch (err: any) {
+                console.error('Failed to skip days:', err)
+                setError(err.message || '건너뛰기 실패')
+                setState((prev) => ({ ...prev, isLoading: false }))
+                throw err
+            }
+        },
+        [fetchStatus, onDataUpdate]
+    )
+
+    // 특정 날짜로 이동
+    const handleJumpToDate = useCallback(
+        async (targetDate: string) => {
+            try {
+                setError(null)
+                setState((prev) => ({ ...prev, isPlaying: false, isLoading: true }))
+                console.log(`Jumping to date: ${targetDate}`)
+
+                const result = await jumpToDate(targetDate)
+                console.log('Jumped successfully:', result)
+
+                // 상태 업데이트
+                await fetchStatus()
+
+                // 데이터 리로드 트리거
+                if (onDataUpdate) {
+                    onDataUpdate()
+                }
+
+                setState((prev) => ({ ...prev, isLoading: false }))
+                return result
+            } catch (err: any) {
+                console.error('Failed to jump to date:', err)
+                setError(err.message || '날짜 이동 실패')
+                setState((prev) => ({ ...prev, isLoading: false }))
                 throw err
             }
         },
@@ -122,7 +189,7 @@ export const useSimulation = (onDataUpdate?: () => void) => {
     const handleReset = useCallback(async () => {
         try {
             setError(null)
-            setState((prev) => ({ ...prev, isPlaying: false }))
+            setState((prev) => ({ ...prev, isPlaying: false, isLoading: true }))
 
             console.log('Resetting simulation...')
             const result = await resetSimulation()
@@ -136,10 +203,12 @@ export const useSimulation = (onDataUpdate?: () => void) => {
                 onDataUpdate()
             }
 
+            setState((prev) => ({ ...prev, isLoading: false }))
             return result
         } catch (err: any) {
             console.error('Failed to reset simulation:', err)
             setError(err.message || '시뮬레이션 리셋 실패')
+            setState((prev) => ({ ...prev, isLoading: false }))
             throw err
         }
     }, [fetchStatus, onDataUpdate])
@@ -156,10 +225,13 @@ export const useSimulation = (onDataUpdate?: () => void) => {
         simulationProgress: state.simulationProgress,
         startDate: state.startDate,
         endDate: state.endDate,
+        isLoading: state.isLoading,
         error,
         handlePlayPause,
         handleReset,
         handleSpeedChange,
         advance,
+        skipDays,
+        jumpToDate: handleJumpToDate,
     }
 }

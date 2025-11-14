@@ -4,8 +4,8 @@
  */
 
 import { useState, useEffect, useCallback } from 'react'
-import { getAllData, getStats, getSanctions, getTimeseries, getTopAccounts, getHourlyDistribution } from '../api/client'
-import { SanctionCase, TopAccount, DetectionType } from '../types'
+import { getAllData } from '../api/client'
+import { DetectionCase, TopAccount, DetectionType } from '../types'
 
 interface ApiDataState {
     isLoading: boolean
@@ -17,7 +17,7 @@ interface ApiDataState {
         cooperativeDetections: number
         totalSanctions: number
     }
-    sanctions: SanctionCase[]
+    detections: DetectionCase[]
     timeSeriesData: Array<{ time: number } & { [key in DetectionType]: number }>
     topAccounts: TopAccount[]
     hourlyDistribution: { [hour: number]: number }
@@ -37,7 +37,7 @@ export const useApiData = () => {
             cooperativeDetections: 0,
             totalSanctions: 0,
         },
-        sanctions: [],
+        detections: [],
         timeSeriesData: [],
         topAccounts: [],
         hourlyDistribution: {},
@@ -61,18 +61,20 @@ export const useApiData = () => {
                 totalSanctions: data.stats.total_sanctions,
             }
 
-            // Sanctions 변환
-            const sanctions: SanctionCase[] = data.sanctions.map((s) => ({
-                id: s.id,
-                model: s.model,
-                timestamp: new Date(s.timestamp).getTime(),
-                type: s.type,
-                accounts: s.accounts,
-                details: s.details,
-                score: s.score,
-                launderedAmount: s.raw.laundered_amount || s.raw.total_laundered_amount,
-                tradePairIds: s.raw.trade_pair_ids,
-                raw: s.raw,
+            // Detections 변환 (제재 여부 포함)
+            const detections: DetectionCase[] = data.detections.map((d) => ({
+                id: d.id,
+                model: d.model,
+                timestamp: typeof d.timestamp === 'string' ? new Date(d.timestamp).getTime() : d.timestamp,
+                type: d.type,
+                accounts: d.accounts,
+                details: d.details,
+                score: d.score,
+                is_sanctioned: d.is_sanctioned,
+                sanction_id: d.sanction_id,
+                sanction_type: d.sanction_type,
+                launderedAmount: d.raw.laundered_amount || d.raw.total_laundered_amount,
+                raw: d.raw,
             }))
 
             // TimeSeries 변환
@@ -99,7 +101,7 @@ export const useApiData = () => {
                 isLoading: false,
                 error: null,
                 stats,
-                sanctions,
+                detections,
                 timeSeriesData,
                 topAccounts,
                 hourlyDistribution: data.hourlyDist,

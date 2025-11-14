@@ -5,7 +5,15 @@ import { DetailModal } from './components/DetailModal'
 import { ModelInfoModal } from './components/ModelInfoModal'
 import { useApiData } from './hooks/useApiData'
 import { useSimulation } from './hooks/useSimulation'
-import { LogEntry, WashTradingHyperparameters, FundingFeeHyperparameters, CooperativeHyperparameters, DetailData, SanctionCase } from './types'
+import {
+    LogEntry,
+    WashTradingHyperparameters,
+    FundingFeeHyperparameters,
+    CooperativeHyperparameters,
+    DetailData,
+    SanctionCase,
+    DetectionCase,
+} from './types'
 import { MenuIcon, XIcon } from './components/Icons'
 
 const App: React.FC = () => {
@@ -58,32 +66,35 @@ const App: React.FC = () => {
 
     // 로그 생성 (API 데이터 기반)
     const logs = useMemo((): LogEntry[] => {
-        return apiData.sanctions
-            .map((event) => {
+        return apiData.detections
+            .filter((d) => d.is_sanctioned) // 제재된 케이스만 로그에 표시
+            .map((detection) => {
                 let message = ''
                 let type: 'sanction' | 'alert' = 'alert'
-                const score = event.score || 0
+                const score = detection.score || 0
 
                 if (score >= 85 || score >= 90) {
                     // critical 또는 bot tier
                     type = 'sanction'
-                    message = `[출금 정지] ID: ${event.accounts[0]} (${event.model} 확정) - 조치 완료`
+                    message = `[출금 정지] ID: ${detection.accounts[0]} (${detection.model} 확정) - 조치 완료`
                 } else {
                     type = 'alert'
-                    message = `[관리자 알림] ID: ${event.accounts[0]} (${event.model} 의심) - 담당자 Slack 전송`
+                    message = `[관리자 알림] ID: ${detection.accounts[0]} (${detection.model} 의심) - 담당자 Slack 전송`
                 }
 
                 return {
-                    id: event.id,
-                    timestamp: event.timestamp,
+                    id: detection.id,
+                    timestamp: typeof detection.timestamp === 'number' ? detection.timestamp : new Date(detection.timestamp).getTime(),
                     type,
                     message,
                 }
             })
             .sort((a, b) => b.timestamp - a.timestamp)
-    }, [apiData.sanctions])
+    }, [apiData.detections])
 
-    const handleSelectDetail = (item: any, type: 'sanction' | 'account') => {
+    const slackMessages = useMemo(() => logs.filter((log) => log.type === 'alert'), [logs])
+
+    const handleSelectDetail = (item: any, type: 'sanction' | 'account' | 'detection') => {
         setSelectedDetail({ type, data: item })
     }
 
@@ -128,7 +139,7 @@ const App: React.FC = () => {
             fundingFeeDetections: apiData.stats.fundingFeeDetections,
             cooperativeDetections: apiData.stats.cooperativeDetections,
             timeSeriesData: apiData.timeSeriesData,
-            sanctions: apiData.sanctions,
+            detections: apiData.detections,
             topFundingFeeAccounts: apiData.topAccounts,
             hourlyDistribution: apiData.hourlyDistribution,
         }),
@@ -187,6 +198,10 @@ const App: React.FC = () => {
                 currentTime={simulation.currentTime || new Date()}
                 startDate={simulation.startDate}
                 endDate={simulation.endDate}
+                isLoading={simulation.isLoading}
+                error={simulation.error}
+                onSkipDays={simulation.skipDays}
+                onJumpToDate={simulation.jumpToDate}
             />
             <main className={`flex-1 overflow-y-auto transition-all duration-300`} style={{ marginLeft: isSidebarOpen ? sidebarWidth : 0 }}>
                 <div className="p-4 md:p-6">
@@ -214,7 +229,7 @@ const App: React.FC = () => {
                 <DetailModal
                     detail={selectedDetail}
                     onClose={handleCloseDetail}
-                    allEvents={apiData.sanctions}
+                    allEvents={apiData.detections}
                     washTradingPairs={apiData.washTradingPairs}
                     cooperativeGroups={apiData.cooperativeGroups}
                     fundingFeeCases={apiData.fundingFeeCases}

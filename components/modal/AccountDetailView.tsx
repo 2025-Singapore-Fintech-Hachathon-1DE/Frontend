@@ -36,18 +36,30 @@ export const AccountDetailView: React.FC<{ account: TopAccount; allEvents: Sanct
             try {
                 const trades = await getAccountTrades(account.account_id)
                 // API 데이터를 Trade 타입으로 변환
-                const formattedTrades: Trade[] = trades.map((t: any) => ({
-                    trade_id: t.trade_id,
-                    account_id: t.account_id,
-                    timestamp: new Date(t.timestamp).getTime(),
-                    symbol: t.symbol,
-                    side: t.side,
-                    position_id: t.position_id,
-                    leverage: t.leverage,
-                    price: t.price,
-                    quantity: t.quantity,
-                    amount: t.amount,
-                }))
+                const formattedTrades: Trade[] = trades.map((t: any) => {
+                    // timestamp 처리
+                    let timestamp: number
+                    if (typeof t.timestamp === 'string') {
+                        timestamp = new Date(t.timestamp).getTime()
+                    } else if (typeof t.timestamp === 'number') {
+                        timestamp = t.timestamp
+                    } else {
+                        timestamp = Date.now()
+                    }
+
+                    return {
+                        trade_id: t.trade_id || '',
+                        account_id: t.account_id || '',
+                        timestamp: timestamp,
+                        symbol: t.symbol || '',
+                        side: t.side || 'LONG',
+                        position_id: t.position_id || '',
+                        leverage: Number(t.leverage) || 1,
+                        price: Number(t.price) || 0,
+                        quantity: Number(t.quantity) || 0,
+                        amount: Number(t.amount) || 0,
+                    }
+                })
                 setAccountTrades(formattedTrades)
             } catch (error) {
                 console.error('Failed to load account trades:', error)

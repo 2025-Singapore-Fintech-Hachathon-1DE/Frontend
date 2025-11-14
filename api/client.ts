@@ -88,6 +88,33 @@ export async function getSanctions(model?: string, limit?: number) {
 }
 
 /**
+ * 모든 탐지 케이스 (제재 여부 포함)
+ */
+export async function getDetections(model?: string, limit?: number) {
+    const params = new URLSearchParams()
+    if (model) params.append('model', model)
+    if (limit) params.append('limit', limit.toString())
+
+    const query = params.toString() ? `?${params.toString()}` : ''
+
+    return fetchApi<
+        Array<{
+            id: string
+            model: 'wash' | 'funding' | 'cooperative'
+            timestamp: string
+            type: string
+            accounts: string[]
+            score: number
+            is_sanctioned: boolean
+            sanction_id?: string
+            sanction_type?: string
+            details: string
+            raw: any
+        }>
+    >(`/api/detections${query}`)
+}
+
+/**
  * 시간별 탐지 추이
  */
 export async function getTimeseries(interval: string = '1h') {
@@ -230,13 +257,49 @@ export async function resetSimulation() {
 }
 
 /**
+ * 특정 날짜로 시뮬레이션 이동
+ * @param targetDate 목표 날짜 (YYYY-MM-DD 형식)
+ */
+export async function jumpToDate(targetDate: string) {
+    // 현재 시뮬레이션 시간을 가져와서 차이 계산
+    const status = await getSimulationStatus()
+    if (!status.current_time) {
+        throw new Error('시뮬레이션이 초기화되지 않았습니다')
+    }
+
+    const currentDate = new Date(status.current_time)
+    const target = new Date(targetDate)
+
+    // 날짜 차이 계산 (밀리초 -> 일)
+    const diffMs = target.getTime() - currentDate.getTime()
+    const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24))
+
+    if (diffDays < 0) {
+        throw new Error('과거 날짜로는 이동할 수 없습니다. 리셋 후 다시 진행해주세요.')
+    }
+
+    if (diffDays === 0) {
+        return {
+            status: 'success',
+            current_time: status.current_time,
+            days_advanced: 0,
+            hours_advanced: 0,
+            message: '이미 해당 날짜입니다',
+        }
+    }
+
+    // advance 호출
+    return advanceSimulation(diffDays, 0)
+}
+
+/**
  * 모든 데이터를 한 번에 가져오기 (초기 로드용)
  */
 export async function getAllData() {
     try {
-        const [stats, sanctions, timeseries, topAccounts, hourlyDist, washPairs, coopGroups, fundingCases] = await Promise.all([
+        const [stats, detections, timeseries, topAccounts, hourlyDist, washPairs, coopGroups, fundingCases] = await Promise.all([
             getStats(),
-            getSanctions(undefined, 100), // 최대 100개
+            getDetections(undefined, 500), // 탐지 전체
             getTimeseries(),
             getTopAccounts(10),
             getHourlyDistribution(),
@@ -247,7 +310,7 @@ export async function getAllData() {
 
         return {
             stats,
-            sanctions,
+            detections,
             timeseries,
             topAccounts,
             hourlyDist,

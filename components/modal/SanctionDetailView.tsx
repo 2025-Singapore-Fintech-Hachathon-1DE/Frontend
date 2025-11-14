@@ -1,11 +1,11 @@
 import React, { useMemo } from 'react'
-import { SanctionCase } from '../../types'
+import { SanctionCase, DetectionCase } from '../../types'
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts'
 import { NetworkGraph } from '../visualization/NetworkGraph'
 import { RelatedTradesTable } from './RelatedTradesTable'
 
 interface SanctionDetailViewProps {
-    sanction: SanctionCase
+    sanction: SanctionCase | DetectionCase
     washTradingPairs: any[]
     cooperativeGroups: any[]
     fundingFeeCases: any[]
@@ -18,7 +18,7 @@ const Stat: React.FC<{ label: string; value: string | number | undefined }> = ({
     </div>
 )
 
-const modelDescriptions: Record<SanctionCase['model'], { title: string; desc: string }> = {
+const modelDescriptions: Record<'wash' | 'funding' | 'cooperative', { title: string; desc: string }> = {
     wash: {
         title: '자금세탁 (Wash Trading)',
         desc: '두 개 이상의 계정이 서로 짜고 거래하여 거래량을 부풀리거나, 손실을 특정 계정에 몰아주어 증정금을 현금화하는 비정상적 거래 패턴을 탐지합니다.',
@@ -44,37 +44,79 @@ const typeDescriptions: Record<string, { title: string; desc: string }> = {
     },
 }
 
-const getScoreBreakdown = (sanction: SanctionCase, washTradingPairs: any[], fundingFeeCases: any[], cooperativePairs: any[]) => {
-    if (sanction.model === 'wash' && sanction.raw.trade_pair_ids) {
-        const pair = washTradingPairs.find((p) => p.pair_id === sanction.raw.trade_pair_ids[0])
-        if (!pair) return []
-        return [
-            { name: 'PNL 미러링', value: pair.score_pnl_mirroring },
-            { name: '동시성', value: pair.score_concurrency },
-            { name: '수량 일치', value: pair.score_quantity },
-            { name: '가치 비율', value: pair.score_trade_ratio },
-        ]
+const getScoreBreakdown = (sanction: SanctionCase | DetectionCase, washTradingPairs: any[], fundingFeeCases: any[], cooperativePairs: any[]) => {
+    // wash trading - raw 데이터에서 직접 점수를 가져옴
+    if (sanction.model === 'wash') {
+        if (sanction.raw.score_pnl_mirroring !== undefined) {
+            return [
+                { name: 'PNL 미러링', value: sanction.raw.score_pnl_mirroring || 0 },
+                { name: '동시성', value: sanction.raw.score_concurrency || 0 },
+                { name: '수량 일치', value: sanction.raw.score_quantity || 0 },
+                { name: '가치 비율', value: sanction.raw.score_trade_ratio || 0 },
+            ]
+        }
+        // fallback: trade_pair_ids로 검색
+        if (sanction.raw.trade_pair_ids) {
+            const pair = washTradingPairs.find((p) => p.pair_id === sanction.raw.trade_pair_ids[0])
+            if (pair) {
+                return [
+                    { name: 'PNL 미러링', value: pair.score_pnl_mirroring || 0 },
+                    { name: '동시성', value: pair.score_concurrency || 0 },
+                    { name: '수량 일치', value: pair.score_quantity || 0 },
+                    { name: '가치 비율', value: pair.score_trade_ratio || 0 },
+                ]
+            }
+        }
     }
-    if (sanction.model === 'funding' && sanction.raw.case_id) {
-        const pair = fundingFeeCases.find((p) => p.case_id === sanction.raw.case_id)
-        if (!pair) return []
-        return [
-            { name: '펀딩 수익', value: pair.score_funding },
-            { name: '보유 시간', value: pair.score_holding },
-            { name: '레버리지', value: pair.score_leverage },
-            { name: '포지션 크기', value: pair.score_position },
-        ]
+
+    // funding fee - raw 데이터에서 직접 점수를 가져옴
+    if (sanction.model === 'funding') {
+        if (sanction.raw.score_funding !== undefined) {
+            return [
+                { name: '펀딩 수익', value: sanction.raw.score_funding || 0 },
+                { name: '보유 시간', value: sanction.raw.score_holding || 0 },
+                { name: '레버리지', value: sanction.raw.score_leverage || 0 },
+                { name: '포지션 크기', value: sanction.raw.score_position || 0 },
+            ]
+        }
+        // fallback: case_id로 검색
+        if (sanction.raw.case_id) {
+            const pair = fundingFeeCases.find((p) => p.case_id === sanction.raw.case_id)
+            if (pair) {
+                return [
+                    { name: '펀딩 수익', value: pair.score_funding || 0 },
+                    { name: '보유 시간', value: pair.score_holding || 0 },
+                    { name: '레버리지', value: pair.score_leverage || 0 },
+                    { name: '포지션 크기', value: pair.score_position || 0 },
+                ]
+            }
+        }
     }
-    if (sanction.model === 'cooperative' && sanction.raw.group_id) {
-        const pair = cooperativePairs.find((p) => p.group_id === sanction.raw.group_id)
-        if (!pair) return []
-        return [
-            { name: 'PNL 비대칭', value: pair.score_pnl_asymmetry },
-            { name: '시간 근접성', value: pair.score_time_proximity },
-            { name: 'IP 공유', value: pair.score_ip_sharing },
-            { name: '포지션 중첩', value: pair.score_position_overlap },
-        ]
+
+    // cooperative - raw 데이터에서 직접 점수를 가져옴
+    if (sanction.model === 'cooperative') {
+        if (sanction.raw.score_pnl_asymmetry !== undefined) {
+            return [
+                { name: 'PNL 비대칭', value: sanction.raw.score_pnl_asymmetry || 0 },
+                { name: '시간 근접성', value: sanction.raw.score_time_proximity || 0 },
+                { name: 'IP 공유', value: sanction.raw.score_ip_sharing || 0 },
+                { name: '포지션 중첩', value: sanction.raw.score_position_overlap || 0 },
+            ]
+        }
+        // fallback: group_id로 검색
+        if (sanction.raw.group_id) {
+            const pair = cooperativePairs.find((p) => p.group_id === sanction.raw.group_id)
+            if (pair) {
+                return [
+                    { name: 'PNL 비대칭', value: pair.score_pnl_asymmetry || 0 },
+                    { name: '시간 근접성', value: pair.score_time_proximity || 0 },
+                    { name: 'IP 공유', value: pair.score_ip_sharing || 0 },
+                    { name: '포지션 중첩', value: pair.score_position_overlap || 0 },
+                ]
+            }
+        }
     }
+
     return []
 }
 
@@ -96,22 +138,53 @@ export const SanctionDetailView: React.FC<SanctionDetailViewProps> = ({ sanction
         let trades: any[] = []
 
         if (sanction.model === 'wash') {
-            trades = washTradingPairs.filter((p) => sanction.raw.trade_pair_ids?.includes(p.pair_id))
-            edges = trades
-                .map((t) => ({
-                    source: t.loser_account,
-                    target: t.winner_account,
-                    amount: t.laundered_amount,
-                    score: t.total_score,
-                }))
-                .filter((e) => e.source && e.target)
+            // DetectionCase - raw 데이터에서 직접 생성
+            if (sanction.raw.pair_id && sanction.raw.winner_account && sanction.raw.loser_account) {
+                edges = [
+                    {
+                        source: sanction.raw.loser_account,
+                        target: sanction.raw.winner_account,
+                        amount: sanction.raw.laundered_amount || 0,
+                        score: sanction.raw.total_score || sanction.score,
+                    },
+                ]
+                trades = [sanction.raw]
+            }
+            // SanctionCase - fallback
+            else if (sanction.raw.trade_pair_ids) {
+                trades = washTradingPairs.filter((p) => sanction.raw.trade_pair_ids?.includes(p.pair_id))
+                edges = trades
+                    .map((t) => ({
+                        source: t.loser_account,
+                        target: t.winner_account,
+                        amount: t.laundered_amount,
+                        score: t.total_score,
+                    }))
+                    .filter((e) => e.source && e.target)
+            }
         } else if (sanction.model === 'cooperative') {
-            trades = cooperativePairs.filter((p) => p.group_id === sanction.raw.group_id)
-            const members = sanction.accounts
-            if (members.length > 1) {
-                for (let i = 0; i < members.length; i++) {
-                    for (let j = i + 1; j < members.length; j++) {
-                        edges.push({ source: members[i], target: members[j], amount: 0, score: 0 }) // Show connection
+            // DetectionCase - raw 데이터에서 직접 생성
+            if (sanction.raw.pair_id && sanction.raw.account_id1 && sanction.raw.account_id2) {
+                trades = [sanction.raw]
+                const members = [sanction.raw.account_id1, sanction.raw.account_id2]
+                edges = [
+                    {
+                        source: members[0],
+                        target: members[1],
+                        amount: Math.abs(sanction.raw.total_pnl || 0),
+                        score: sanction.raw.total_score || sanction.score,
+                    },
+                ]
+            }
+            // SanctionCase - fallback
+            else if (sanction.raw.group_id) {
+                trades = cooperativePairs.filter((p) => p.group_id === sanction.raw.group_id)
+                const members = sanction.accounts
+                if (members.length > 1) {
+                    for (let i = 0; i < members.length; i++) {
+                        for (let j = i + 1; j < members.length; j++) {
+                            edges.push({ source: members[i], target: members[j], amount: 0, score: 0 })
+                        }
                     }
                 }
             }
@@ -120,49 +193,109 @@ export const SanctionDetailView: React.FC<SanctionDetailViewProps> = ({ sanction
     }, [sanction, isNetworkSanction, washTradingPairs, cooperativePairs])
 
     const renderTradeDetails = () => {
-        if (sanction.model === 'wash' && sanction.raw.trade_pair_ids) {
-            const pairData = washTradingPairs.find((p) => p.pair_id === sanction.raw.trade_pair_ids[0])
-            if (!pairData) return <p>거래 내역을 찾을 수 없습니다.</p>
-            return (
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm mt-4">
-                    <Stat label="심볼" value={pairData.symbol} />
-                    <Stat label="수익 계정" value={pairData.winner_account} />
-                    <Stat label="손실 계정" value={pairData.loser_account} />
-                    <Stat label="현금화 금액" value={`$${(pairData.laundered_amount || 0).toFixed(2)}`} />
-                    <Stat label="레버리지" value={`${pairData.leverage}x`} />
-                    <Stat label="거래 동시성(초)" value={(pairData.open_time_diff_sec || 0).toFixed(4)} />
-                </div>
-            )
+        // wash trading
+        if (sanction.model === 'wash') {
+            // DetectionCase - raw 데이터에서 직접 읽기
+            if (sanction.raw.pair_id && sanction.raw.symbol) {
+                return (
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm mt-4">
+                        <Stat label="심볼" value={sanction.raw.symbol} />
+                        <Stat label="수익 계정" value={sanction.raw.winner_account} />
+                        <Stat label="손실 계정" value={sanction.raw.loser_account} />
+                        <Stat label="현금화 금액" value={`$${(sanction.raw.laundered_amount || 0).toFixed(2)}`} />
+                        <Stat label="레버리지" value={`${sanction.raw.leverage}x`} />
+                        <Stat label="거래 동시성(초)" value={(sanction.raw.open_time_diff_sec || 0).toFixed(4)} />
+                        <Stat label="수익자 PNL" value={`$${(sanction.raw.winner_pnl || 0).toFixed(2)}`} />
+                        <Stat label="손실자 PNL" value={`$${(sanction.raw.loser_pnl || 0).toFixed(2)}`} />
+                    </div>
+                )
+            }
+            // SanctionCase - fallback
+            if (sanction.raw.trade_pair_ids) {
+                const pairData = washTradingPairs.find((p) => p.pair_id === sanction.raw.trade_pair_ids[0])
+                if (!pairData) return <p className="text-gray-400">거래 내역을 찾을 수 없습니다.</p>
+                return (
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm mt-4">
+                        <Stat label="심볼" value={pairData.symbol} />
+                        <Stat label="수익 계정" value={pairData.winner_account} />
+                        <Stat label="손실 계정" value={pairData.loser_account} />
+                        <Stat label="현금화 금액" value={`$${(pairData.laundered_amount || 0).toFixed(2)}`} />
+                        <Stat label="레버리지" value={`${pairData.leverage}x`} />
+                        <Stat label="거래 동시성(초)" value={(pairData.open_time_diff_sec || 0).toFixed(4)} />
+                    </div>
+                )
+            }
         }
-        if (sanction.model === 'funding' && sanction.raw.case_id) {
-            const caseData = fundingFeeCases.find((p) => p.case_id === sanction.raw.case_id)
-            if (!caseData) return <p>거래 내역을 찾을 수 없습니다.</p>
-            return (
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm mt-4">
-                    <Stat label="심볼" value={caseData.symbol} />
-                    <Stat label="레버리지" value={`${caseData.leverage}x`} />
-                    <Stat label="포지션 보유 시간(분)" value={(caseData.holding_minutes || 0).toFixed(2)} />
-                    <Stat label="총 펀딩 수익" value={`$${(caseData.total_funding || 0).toLocaleString()}`} />
-                    <Stat label="거래량" value={(caseData.amount || 0).toLocaleString()} />
-                    <Stat label="심각도" value={caseData.severity} />
-                </div>
-            )
+
+        // funding fee
+        if (sanction.model === 'funding') {
+            // DetectionCase - raw 데이터에서 직접 읽기
+            if (sanction.raw.case_id && sanction.raw.symbol) {
+                return (
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm mt-4">
+                        <Stat label="심볼" value={sanction.raw.symbol} />
+                        <Stat label="계정" value={sanction.raw.account_id} />
+                        <Stat label="레버리지" value={`${sanction.raw.leverage}x`} />
+                        <Stat label="포지션 보유 시간(분)" value={(sanction.raw.holding_minutes || 0).toFixed(2)} />
+                        <Stat label="윈도우 펀딩 수익" value={`$${(sanction.raw.window_funding || 0).toFixed(2)}`} />
+                        <Stat label="계정 총 펀딩" value={`$${(sanction.raw.account_total_funding || 0).toFixed(2)}`} />
+                        <Stat label="거래량" value={(sanction.raw.amount || 0).toLocaleString()} />
+                        <Stat label="심각도" value={sanction.raw.severity} />
+                    </div>
+                )
+            }
+            // SanctionCase - fallback
+            if (sanction.raw.case_id) {
+                const caseData = fundingFeeCases.find((p) => p.case_id === sanction.raw.case_id)
+                if (!caseData) return <p className="text-gray-400">거래 내역을 찾을 수 없습니다.</p>
+                return (
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm mt-4">
+                        <Stat label="심볼" value={caseData.symbol} />
+                        <Stat label="레버리지" value={`${caseData.leverage}x`} />
+                        <Stat label="포지션 보유 시간(분)" value={(caseData.holding_minutes || 0).toFixed(2)} />
+                        <Stat label="총 펀딩 수익" value={`$${(caseData.total_funding || 0).toLocaleString()}`} />
+                        <Stat label="거래량" value={(caseData.amount || 0).toLocaleString()} />
+                        <Stat label="심각도" value={caseData.severity} />
+                    </div>
+                )
+            }
         }
-        if (sanction.model === 'cooperative' && sanction.raw.group_id) {
-            const groupData = cooperativeGroups.find((g) => g.group_id === sanction.raw.group_id)
-            if (!groupData) return <p>거래 내역을 찾을 수 없습니다.</p>
-            return (
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm mt-4">
-                    <Stat label="그룹 ID" value={groupData.group_id} />
-                    <Stat label="멤버 수" value={groupData.member_count} />
-                    <Stat label="총 거래 수" value={groupData.trade_count} />
-                    <Stat label="공유 IP 수" value={groupData.shared_ip_count} />
-                    <Stat label="총 PNL" value={`$${(groupData.pnl_total || 0).toFixed(2)}`} />
-                    <Stat label="위험 레벨" value={groupData.risk_level} />
-                </div>
-            )
+
+        // cooperative
+        if (sanction.model === 'cooperative') {
+            // DetectionCase - raw 데이터에서 직접 읽기
+            if (sanction.raw.pair_id && sanction.raw.symbol) {
+                return (
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm mt-4">
+                        <Stat label="심볼" value={sanction.raw.symbol} />
+                        <Stat label="계정 1" value={sanction.raw.account_id1} />
+                        <Stat label="계정 2" value={sanction.raw.account_id2} />
+                        <Stat label="총 PNL" value={`$${(sanction.raw.total_pnl || 0).toFixed(2)}`} />
+                        <Stat label="계정1 PNL" value={`$${(sanction.raw.rpnl1 || 0).toFixed(2)}`} />
+                        <Stat label="계정2 PNL" value={`$${(sanction.raw.rpnl2 || 0).toFixed(2)}`} />
+                        <Stat label="오픈 시간차(초)" value={(sanction.raw.open_time_diff_sec || 0).toFixed(2)} />
+                        <Stat label="클로즈 시간차(초)" value={(sanction.raw.close_time_diff_sec || 0).toFixed(2)} />
+                    </div>
+                )
+            }
+            // SanctionCase - fallback
+            if (sanction.raw.group_id) {
+                const groupData = cooperativeGroups.find((g) => g.group_id === sanction.raw.group_id)
+                if (!groupData) return <p className="text-gray-400">거래 내역을 찾을 수 없습니다.</p>
+                return (
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm mt-4">
+                        <Stat label="그룹 ID" value={groupData.group_id} />
+                        <Stat label="멤버 수" value={groupData.member_count} />
+                        <Stat label="총 거래 수" value={groupData.trade_count} />
+                        <Stat label="공유 IP 수" value={groupData.shared_ip_count} />
+                        <Stat label="총 PNL" value={`$${(groupData.pnl_total || 0).toFixed(2)}`} />
+                        <Stat label="위험 레벨" value={groupData.risk_level} />
+                    </div>
+                )
+            }
         }
-        return <p>상세 거래 내역을 찾을 수 없습니다.</p>
+
+        return <p className="text-gray-400">상세 거래 내역을 찾을 수 없습니다.</p>
     }
 
     return (
