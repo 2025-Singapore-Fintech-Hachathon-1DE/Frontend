@@ -43,18 +43,18 @@ const calculateTopAccounts = (
                 // window_funding 사용 (DetectionCase)
                 accountStats[accId].profits.funding += detection.raw.window_funding || detection.window_funding || 0
             } else if (detection.model === 'wash') {
-                // DetectionCase - raw에서 직접 확인
-                if (detection.raw.winner_account === accId) {
-                    accountStats[accId].profits.wash += detection.raw.laundered_amount || detection.laundered_amount || 0
-                }
-                // SanctionCase - fallback
-                else {
-                    const winnerAccountsInCase = new Set(
-                        washTradingPairs.filter((p) => detection.raw.trade_pair_ids?.includes(p.pair_id)).map((p) => p.winner_account)
-                    )
-                    if (winnerAccountsInCase.has(accId)) {
-                        accountStats[accId].profits.wash += (detection.laundered_amount || 0) / (winnerAccountsInCase.size || 1)
-                    }
+                // Wash trading: winner는 이익, loser는 손실
+                const winnerAccount = detection.winner_account || detection.raw.winner_account
+                const loserAccount = detection.loser_account || detection.raw.loser_account
+                const launderedAmount = detection.laundered_amount || detection.raw.laundered_amount || 0
+
+                if (accId === winnerAccount) {
+                    // 이익을 본 계정 (양수)
+                    accountStats[accId].profits.wash += launderedAmount
+                } else if (accId === loserAccount) {
+                    // 손실을 본 계정 (음수)
+                    const loserPnl = detection.raw.loser_pnl || 0
+                    accountStats[accId].profits.wash += loserPnl
                 }
             } else if (detection.model === 'cooperative') {
                 // DetectionCase - raw에서 PNL 분배

@@ -54,6 +54,8 @@ export interface DetectionCase {
     sanction_type?: string
     // 모델별 특화 필드
     laundered_amount?: number // wash trading
+    winner_account?: string // wash trading - 이익 계정
+    loser_account?: string // wash trading - 손실 계정
     window_funding?: number // funding fee
     total_pnl?: number // cooperative
     tradePairIds?: string[]
